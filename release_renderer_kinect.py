@@ -30,7 +30,7 @@ def main(args):
 
     calib_trans_dir = os.path.join(args.release_data_root, 'calibrations', args.recording_name)  # extrinsics
     camera_params_dir = os.path.join(args.release_data_root, 'kinect_cam_params')  # intrinsics
-    color_dir = osp.join(args.release_data_root, 'kinect_color', args.recording_name, args.view)
+    depth_dir = osp.join(args.release_data_root, 'kinect_depth', args.recording_name, args.view)
 
     data_split_info = pd.read_csv(os.path.join(args.release_data_root, 'data_splits.csv'))
     train_split_list = list(data_split_info['train'])
@@ -113,26 +113,26 @@ def main(args):
         if args.view != 'master':
             static_scene.apply_transform(trans_maintosub)
 
-        body_scene_rendering_dir = os.path.join(args.save_root, 'renderings_kinect_3d')
-        if not osp.exists(body_scene_rendering_dir):
-            os.mkdir(body_scene_rendering_dir)
-        body_scene_rendering_dir = os.path.join(body_scene_rendering_dir, args.recording_name)
-        if not osp.exists(body_scene_rendering_dir):
-            os.mkdir(body_scene_rendering_dir)
-        body_scene_rendering_dir = os.path.join(body_scene_rendering_dir, args.view)
-        if not osp.exists(body_scene_rendering_dir):
-            os.mkdir(body_scene_rendering_dir)
+    #   body_scene_rendering_dir = os.path.join(args.save_root, 'renderings_kinect_3d')
+    #     if not osp.exists(body_scene_rendering_dir):
+    #         os.mkdir(body_scene_rendering_dir)
+    #     body_scene_rendering_dir = os.path.join(body_scene_rendering_dir, args.recording_name)
+    #     if not osp.exists(body_scene_rendering_dir):
+    #         os.mkdir(body_scene_rendering_dir)
+    #     body_scene_rendering_dir = os.path.join(body_scene_rendering_dir, args.view)
+    #     if not osp.exists(body_scene_rendering_dir):
+    #         os.mkdir(body_scene_rendering_dir)
 
-    if args.rendering_mode == 'body' or args.rendering_mode == 'both':
-        rendering_dir = os.path.join(args.save_root, 'renderings_kinect_img')
-        if not osp.exists(rendering_dir):
-            os.mkdir(rendering_dir)
-        rendering_dir = os.path.join(rendering_dir, args.recording_name)
-        if not osp.exists(rendering_dir):
-            os.mkdir(rendering_dir)
-        rendering_dir = os.path.join(rendering_dir, args.view)
-        if not osp.exists(rendering_dir):
-            os.mkdir(rendering_dir)
+    # if args.rendering_mode == 'body' or args.rendering_mode == 'both':
+    #     rendering_dir = os.path.join(args.save_root, 'renderings_kinect_img')
+    #     if not osp.exists(rendering_dir):
+    #         os.mkdir(rendering_dir)
+    #     rendering_dir = os.path.join(rendering_dir, args.recording_name)
+    #     if not osp.exists(rendering_dir):
+    #         os.mkdir(rendering_dir)
+    #     rendering_dir = os.path.join(rendering_dir, args.view)
+    #     if not osp.exists(rendering_dir):
+    #         os.mkdir(rendering_dir)
 
     ########## read kinect color camera intrinsics
     with open(osp.join(camera_params_dir, 'kinect_{}'.format(args.view), 'Color.json'), 'r') as f:
@@ -143,6 +143,8 @@ def main(args):
     ########## create render camera
     camera_pose = np.eye(4)
     camera_pose = np.array([1.0, -1.0, -1.0, 1.0]).reshape(-1, 1) * camera_pose
+    print("camera_pose")
+    print("f_x")
     camera = pyrender.camera.IntrinsicsCamera(
         fx=f_x, fy=f_y,
         cx=c_x, cy=c_y)
@@ -163,7 +165,7 @@ def main(args):
 
     ######## create smplx/smpl body models
     if args.model_type == 'smplx':
-        model_interactee = smplx.create(os.path.join(args.model_folder, 'smplx_model'), model_type='smplx',
+        model_interactee = smplx.create(model_path=args.model_folder, model_type='smplx',
                                         gender=interactee_gender, ext='npz', num_pca_comps=args.num_pca_comps,
                                         create_global_orient=True, create_transl=True, create_body_pose=True,
                                         create_betas=True,
@@ -171,7 +173,7 @@ def main(args):
                                         create_expression=True, create_jaw_pose=True, create_leye_pose=True,
                                         create_reye_pose=True).to(device)
 
-        model_camera_wearer = smplx.create(os.path.join(args.model_folder, 'smplx_model'), model_type='smplx',
+        model_camera_wearer = smplx.create(args.model_folder, model_type='smplx',
                                            gender=camera_wearer_gender, ext='npz', num_pca_comps=args.num_pca_comps,
                                            create_global_orient=True, create_transl=True, create_body_pose=True,
                                            create_betas=True,
@@ -183,7 +185,10 @@ def main(args):
         model_camera_wearer = smplx.create(args.model_folder, model_type='smpl', gender=camera_wearer_gender).to(device)
 
 
-
+    img_names = []
+    xs = []
+    ys = []
+    zs = []
     for i_frame in tqdm(range(start_frame_dict[args.recording_name], end_frame_dict[args.recording_name]+1)[args.start::args.step]):
         frame_id = 'frame_{}'.format("%05d"%i_frame)
         if not osp.exists(osp.join(fitting_root_interactee, 'body_idx_{}'.format(interactee_idx), 'results', frame_id, '000.pkl')):
@@ -192,8 +197,8 @@ def main(args):
         if not osp.exists(osp.join(fitting_root_camera_wearer, 'body_idx_{}'.format(camera_wearer_idx), 'results', frame_id, '000.pkl')):
             print('camera wearer fitting {} do not exist!'.format(frame_id))
             continue
-        if not osp.exists(osp.join(color_dir, frame_id + '.jpg')):
-            print('view {}, kinect color image {} do not exist!'.format(args.view, frame_id))
+        if not osp.exists(osp.join(depth_dir, frame_id + '.png')):
+            print('view {}, kinect depth image {} do not exist!'.format(args.view, frame_id))
             continue
 
         ##### read interactee smplx params
@@ -237,6 +242,12 @@ def main(args):
 
         output = model_camera_wearer(return_verts=True, **torch_param)
         vertices = output.vertices.detach().cpu().numpy().squeeze()
+        x,y,z = vertices.mean(axis=0)
+        img_name = f"{args.scene_name}_{args.recording_name}_{frame_id}"
+        img_names.append(img_name)
+        xs.append(x)
+        ys.append(y)
+        zs.append(z)
         body = trimesh.Trimesh(vertices, model_camera_wearer.faces, process=False)
         if args.view != 'master':
             body.apply_transform(trans_maintosub)
@@ -244,7 +255,7 @@ def main(args):
 
         ###### render on undistorted color image
         if args.rendering_mode == 'body' or args.rendering_mode == 'both':
-            img = cv2.imread(os.path.join(color_dir, frame_id + '.jpg'))[:, :, ::-1]
+            img = cv2.imread(os.path.join(depth_dir, frame_id + '.png'))[:, :, ::-1]
             H, W, _ = img.shape
             img_undistort = cv2.undistort(img.copy(),
                                           np.asarray(color_cam['camera_mtx']),
@@ -283,27 +294,73 @@ def main(args):
         if args.rendering_mode == '3d' or args.rendering_mode == 'both':
             static_scene_mesh = pyrender.Mesh.from_trimesh(static_scene)
 
+            # Generate scene
             scene = pyrender.Scene()
             scene.add(camera, pose=camera_pose)
             scene.add(light, pose=camera_pose)
             scene.add(static_scene_mesh, 'mesh')
-            scene.add(body_mesh_interactee, 'body_mesh_interactee')
-            scene.add(body_mesh_camera_wearer, 'body_mesh_camera_wearer')
 
             r = pyrender.OffscreenRenderer(viewport_width=1920,
                                            viewport_height=1080)
-            color, _ = r.render(scene)
+            color, depth = r.render(scene)
+            color = color.astype(np.float32) / 255.0
+            img = pil_img.fromarray((255 * depth/depth.max()).astype(np.uint8))
+            img = img.resize((int(1920 / args.scale), int(1080 / args.scale)))
+            img.save(os.path.join(args.save_root, f'{args.scene_name}_{args.recording_name}_{frame_id}_depth_vis.jpg'))
+
+            # Generate silhouette
+            scene = pyrender.Scene()
+            scene.add(camera, pose=camera_pose)
+            scene.add(light, pose=camera_pose)
+            scene.add(body_mesh_camera_wearer, 'body_mesh_camera_wearer')
+            r = pyrender.OffscreenRenderer(viewport_width=1920,
+                                           viewport_height=1080)
+            _, depth = r.render(scene)
+            silhouette = (depth > 0).astype(np.float32)
+            img = pil_img.fromarray((silhouette * 255).astype(np.uint8))
+            img = img.resize((int(1920 / args.scale), int(1080 / args.scale)))
+            img.save(os.path.join(args.save_root, f'{img_name}_silhouette.jpg'))
+
+            # Generate both for reference
+            scene = pyrender.Scene()
+            scene.add(camera, pose=camera_pose)
+            scene.add(light, pose=camera_pose)
+            # scene.add(body_mesh_camera_wearer, 'body_mesh_camera_wearer')
+            scene.add(static_scene_mesh, 'mesh')
+            r = pyrender.OffscreenRenderer(viewport_width=224 * 7,
+                                           viewport_height=224 * 7)
+            color, depth = r.render(scene)
+            silhouette = (depth > 0).astype(np.float32)
+            color = color.astype(np.float32) / 255.0
+            img = pil_img.fromarray((color * 255).astype(np.uint8))
+            img = img.resize((int(224 * 7 / args.scale), int(224 * 7 / args.scale)))
+            img.save(os.path.join(args.save_root, f'{img_name}_scene.jpg'))
+
+            body_ball = pyrender.Mesh.from_trimesh(trimesh.primitives.Sphere(radius=0.1, center=(x,y,z)))
+
+            # Scene with ball
+            scene = pyrender.Scene()
+            scene.add(camera, pose=camera_pose)
+            scene.add(light, pose=camera_pose)
+            scene.add(body_ball, 'body_ball')
+            scene.add(static_scene_mesh, 'mesh')
+            r = pyrender.OffscreenRenderer(viewport_width=1920,
+                                           viewport_height=1080)
+            color, depth = r.render(scene)
+            silhouette = (depth > 0).astype(np.float32)
             color = color.astype(np.float32) / 255.0
             img = pil_img.fromarray((color * 255).astype(np.uint8))
             img = img.resize((int(1920 / args.scale), int(1080 / args.scale)))
-            img.save(os.path.join(body_scene_rendering_dir, frame_id + '.jpg'))
+            img.save(os.path.join(args.save_root, f'{img_name}_ball.jpg'))
+
+    return {'img_name': img_names, 'x': xs, 'y': ys, 'z': zs}
 
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
 
-    parser.add_argument('--release_data_root', type=str, default='/mnt/ssd/egobody_release', help='path to egobody dataset')
-    parser.add_argument('--save_root', type=str, default='/mnt/ssd', help='path to save renderings')
+    parser.add_argument('--release_data_root', type=str, default='dataset', help='path to egobody dataset')
+    parser.add_argument('--save_root', type=str, default='results', help='path to save renderings')
     parser.add_argument('--recording_name', type=str, default='recording_20220225_S27_S26_01')
     parser.add_argument('--view', type=str, default='master', choices=['master', 'sub_1', 'sub_2', 'sub_3', 'sub_4'])
     parser.add_argument('--scene_name', type=str, default='cnb_dlab_0225')
@@ -315,10 +372,11 @@ if __name__ == '__main__':
     parser.add_argument('--scale', type=int, default=2, help='the scale to downsample output rendering images')
     parser.add_argument('--start', type=int, default=0, help='id of the starting frame')
     parser.add_argument('--step', type=int, default=1, help='id of the starting frame')
-    parser.add_argument('--model_folder', default='/mnt/hdd/PROX/body_models', type=str, help='path to smpl/smplx models')
+    parser.add_argument('--model_folder', default='models', type=str, help='path to smpl/smplx models')
     parser.add_argument('--num_pca_comps', type=int, default=12)
     parser.add_argument('--rendering_mode', default='3d', type=str, choices=['body', '3d', 'both'],
                         help='body: render gt body on egocentric images; 3d: render gt body in 3d scenes')
 
     args = parser.parse_args()
+    print("args", args)
     main(args)
